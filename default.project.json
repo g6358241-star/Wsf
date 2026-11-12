@@ -1,0 +1,11 @@
+{
+  "name": "NpcDonationSimulator",
+  "tree": {
+    "$className": "DataModel",
+    "ServerScriptService": {
+      "NpcCore": {
+        "$path": "src/server"
+      }
+    }
+  }
+}
