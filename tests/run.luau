@@ -1,16 +1,16 @@
 -- Minimal Lune test runner. Usage: lune run tests/run
-local Rng = require("../src/server/Logic/Rng")
-local Ledger = require("../src/server/Logic/Ledger")
-local SecondaryCurrency = require("../src/server/Logic/SecondaryCurrency")
-local OfflineEarnings = require("../src/server/Logic/OfflineEarnings")
-local IncomeStats = require("../src/server/Logic/IncomeStats")
-local Relationships = require("../src/server/Logic/Relationships")
-local Luck = require("../src/server/Logic/Luck")
-local OfferGenerator = require("../src/server/Logic/OfferGenerator")
-local NpcFactory = require("../src/server/Logic/NpcFactory")
-local NpcBrain = require("../src/server/Logic/NpcBrain")
-local Transactions = require("../src/server/Logic/Transactions")
-local PersistenceConfig = require("../src/server/Config/Persistence")
+local Rng = require("../src/NpcCore/Logic/Rng")
+local Ledger = require("../src/NpcCore/Logic/Ledger")
+local SecondaryCurrency = require("../src/NpcCore/Logic/SecondaryCurrency")
+local OfflineEarnings = require("../src/NpcCore/Logic/OfflineEarnings")
+local IncomeStats = require("../src/NpcCore/Logic/IncomeStats")
+local Relationships = require("../src/NpcCore/Logic/Relationships")
+local Luck = require("../src/NpcCore/Logic/Luck")
+local OfferGenerator = require("../src/NpcCore/Logic/OfferGenerator")
+local NpcFactory = require("../src/NpcCore/Logic/NpcFactory")
+local NpcBrain = require("../src/NpcCore/Logic/NpcBrain")
+local Transactions = require("../src/NpcCore/Logic/Transactions")
+local PersistenceConfig = require("../src/NpcCore/Config/Persistence")
 local process = require("@lune/process")
 
 local passed, failed = 0, 0
@@ -48,17 +48,17 @@ end)
 
 test("Ledger transfer validates and is idempotent", function()
 	local l = Ledger.new()
-	local a = Ledger.newAccount("a", { Primary = 100 })
+	local a = Ledger.newAccount("a", { Coins = 100 })
 	local b = Ledger.newAccount("b")
-	eq((Ledger.transfer(l, "t1", a, b, "Primary", 40, true)), true)
-	eq(select(2, Ledger.transfer(l, "t1", a, b, "Primary", 40, true)), "Duplicate")
-	eq(select(2, Ledger.transfer(l, "t2", a, b, "Primary", 61)), "InsufficientFunds")
-	eq(select(2, Ledger.transfer(l, "t3", a, b, "Primary", 1.5)), "BadAmount")
-	eq(select(2, Ledger.transfer(l, "t4", a, b, "Primary", -5)), "BadAmount")
-	eq(select(2, Ledger.transfer(l, "t5", a, b, "Primary", 0 / 0)), "BadAmount")
+	eq((Ledger.transfer(l, "t1", a, b, "Coins", 40, true)), true)
+	eq(select(2, Ledger.transfer(l, "t1", a, b, "Coins", 40, true)), "Duplicate")
+	eq(select(2, Ledger.transfer(l, "t2", a, b, "Coins", 61)), "InsufficientFunds")
+	eq(select(2, Ledger.transfer(l, "t3", a, b, "Coins", 1.5)), "BadAmount")
+	eq(select(2, Ledger.transfer(l, "t4", a, b, "Coins", -5)), "BadAmount")
+	eq(select(2, Ledger.transfer(l, "t5", a, b, "Coins", 0 / 0)), "BadAmount")
 	eq(select(2, Ledger.transfer(l, "t6", a, b, "Robux", 1)), "BadCurrency")
-	eq(a.balances.Primary, 60)
-	eq(b.balances.Primary, 40)
+	eq(a.balances.Coins, 60)
+	eq(b.balances.Coins, 40)
 	eq(a.donated, 40)
 	eq(b.raised, 40)
 end)
@@ -66,10 +66,10 @@ end)
 test("Ledger mint is allow-listed per currency", function()
 	local l = Ledger.new()
 	local a = Ledger.newAccount("a")
-	eq(select(2, Ledger.mint(l, "m1", a, "Primary", 10, "NpcPassiveIncome")), "MintNotAllowed")
-	eq(select(2, Ledger.mint(l, "m2", a, "Secondary", 10, "RobuxPurchase")), "MintNotAllowed") -- secondary not for Robux
-	eq((Ledger.mint(l, "m3", a, "Secondary", 10, "SecondaryReward")), true)
-	eq(a.balances.Secondary, 10)
+	eq(select(2, Ledger.mint(l, "m1", a, "Coins", 10, "NpcPassiveIncome")), "MintNotAllowed")
+	eq(select(2, Ledger.mint(l, "m2", a, "DCoins", 10, "RobuxPurchase")), "MintNotAllowed") -- secondary not for Robux
+	eq((Ledger.mint(l, "m3", a, "DCoins", 10, "SecondaryReward")), true)
+	eq(a.balances.DCoins, 10)
 end)
 
 test("Secondary reward is deterministic, monotonic, always >= 1", function()
@@ -90,12 +90,12 @@ end)
 test("Offline: owner example 2000/24h at 5% = 4.17 per hour", function()
 	local stats = IncomeStats.new()
 	local now = 1_800_000_000
-	local opts = { maxRecords = 200, dailyDays = 30, averagedSources = { NpcStandDonation = true }, primaryCurrency = "Primary" }
+	local opts = { maxRecords = 200, dailyDays = 30, averagedSources = { NpcStandDonation = true }, primaryCurrency = "Coins" }
 	for h = 0, 19 do
-		IncomeStats.record(stats, { id = 0, t = now - h * 3600, fromId = "n", fromName = "N", amount = 100, currency = "Primary", source = "NpcStandDonation" }, opts)
+		IncomeStats.record(stats, { id = 0, t = now - h * 3600, fromId = "n", fromName = "N", amount = 100, currency = "Coins", source = "NpcStandDonation" }, opts)
 	end
 	-- excluded sources must not count toward the average
-	IncomeStats.record(stats, { id = 0, t = now, fromId = "x", fromName = "X", amount = 999, currency = "Primary", source = "RobuxPurchase" }, opts)
+	IncomeStats.record(stats, { id = 0, t = now, fromId = "x", fromName = "X", amount = 999, currency = "Coins", source = "RobuxPurchase" }, opts)
 	local avg = IncomeStats.averageHourly(stats, now, 24)
 	near(avg, 2000 / 24, 1e-9, "average")
 	local result = OfflineEarnings.compute(avg, 3600)
@@ -180,21 +180,21 @@ test("Player donation to NPC: listed amounts only, secondary always, conserves p
 	local profile = NpcFactory.create(rng, "npc", tier, 0)
 	profile.offers = { 10, 50 }
 	local npc = NpcBrain.fromProfile(profile, 0, rng)
-	Ledger.mint(l, "spawn", npc.wallet, "Primary", 1000, "NpcSpawnWallet")
-	local player = Ledger.newAccount("player", { Primary = 100 })
+	Ledger.mint(l, "spawn", npc.wallet, "Coins", 1000, "NpcSpawnWallet")
+	local player = Ledger.newAccount("player", { Coins = 100 })
 
 	eq(Transactions.playerDonateToNpc(l, "d0", player, npc, 25, 1, rng).err, "NotOffered")
 	eq(Transactions.playerDonateToNpc(l, "d1", player, npc, 500, 1, rng).ok, false, "not listed")
-	local before = player.balances.Primary + NpcBrain.totalFunds(npc)
+	local before = player.balances.Coins + NpcBrain.totalFunds(npc)
 	for i = 1, 30 do
 		local res = Transactions.playerDonateToNpc(l, "tx" .. i, player, npc, 10, 1, rng)
-		if player.balances.Primary < 10 and not res.ok then
+		if player.balances.Coins < 10 and not res.ok then
 			break
 		end
 		eq(res.ok, true)
 		eq(res.secondary, SecondaryCurrency.reward(10), "secondary always granted")
 	end
-	eq(player.balances.Primary + NpcBrain.totalFunds(npc), before, "primary conserved")
+	eq(player.balances.Coins + NpcBrain.totalFunds(npc), before, "primary conserved")
 	eq(Transactions.playerDonateToNpc(l, "tx1", player, npc, 10, 1, rng).err, "Duplicate")
 end)
 
@@ -204,14 +204,41 @@ test("Donation decision never picks unaffordable or unlisted amounts", function(
 	local tier = NpcFactory.rollWealthTier(rng)
 	for i = 1, 3000 do
 		local npc = NpcBrain.fromProfile(NpcFactory.create(rng, "n" .. i, tier, 0), 0, rng)
-		Ledger.mint(l, "w" .. i, npc.budget, "Primary", rng:int(1, 5000), "NpcSpawnWallet")
+		Ledger.mint(l, "w" .. i, npc.budget, "Coins", rng:int(1, 5000), "NpcSpawnWallet")
 		local stand = { id = "s", ownerId = "p", offers = { 5, 100, 1000, 10000 }, appeal = rng:next(), luck = 0 }
 		local decision = NpcBrain.decideDonation(npc, stand, 1, rng)
 		if decision.amount then
 			assert(table.find(stand.offers, decision.amount), "listed")
-			assert(decision.amount <= npc.budget.balances.Primary, "affordable")
+			assert(decision.amount <= npc.budget.balances.Coins, "affordable")
 		end
 	end
+end)
+
+test("DCoins can only be minted as a secondary reward (APPROVED)", function()
+	local l = Ledger.new()
+	local a = Ledger.newAccount("a")
+	for _, reason in { "RobuxPurchase", "OfflineEarnings", "StartingGrant", "PlaytimeReward", "DailyReward", "QuestReward", "NpcSpawnWallet" } do
+		eq(select(2, Ledger.mint(l, "x" .. reason, a, "DCoins", 5, reason)), "MintNotAllowed", reason)
+	end
+	eq(a.balances.DCoins, 0)
+end)
+
+test("Rules (playtime/daily/quests/packs) can never grant DCoins", function()
+	local Rules = require("../src/HarborShared/Rules")
+	local cfg = {
+		MaxBalance = 1e9, DailySeconds = 86400, DailyCoins = 100, DailyPearls = 5, XPPerMinute = 10,
+		PlayRewardSeconds = 300, PlayRewardCoins = 50,
+		Quests = { Q = { Label = "q", Field = "PlaySeconds", Target = 1, Coins = 10, Pearls = 1 } }, Shop = {},
+	}
+	local data = { Coins = 0, Pearls = 0, DCoins = 0, LastDaily = -1, XP = 0, PlaySeconds = 0, RewardIndex = 0, BoostUntil = 0, Quests = {}, Inventory = {} }
+	assert(not pcall(Rules.credit, data, "DCoins", 1, cfg), "credit(DCoins) must error")
+	Rules.daily(data, 1_800_000_000, cfg)
+	for _ = 1, 30 do
+		Rules.tick(data, 60, 1_800_000_000, cfg)
+	end
+	Rules.quest(data, "Q", cfg)
+	eq(data.DCoins, 0, "DCoins untouched")
+	assert(data.Coins > 0, "Coins granted")
 end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))

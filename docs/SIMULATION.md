@@ -1,29 +1,28 @@
 # Balance simulation — 24 runs × 6h per scenario, 48 stands
 
-All parameters are PROPOSALS from src/server/Config. Times are simulated, not promises to players.
+All parameters are PROPOSALS from src/NpcCore/Config. Times are simulated, not promises to players.
 
 ## random tier (80/17/3)
 
-| Listing | Donations/h | Median gap (min) | Passers before 1st donation (p10/median/p90) | Avg gift | NPC→NPC/h | Requests/h | Peak NPCs |
-|---|---|---|---|---|---|---|---|
-| Only 100 | 1.62 | 20.7 | 4 / 37 / 136 | 100 | 138.1 | 10.7 | 84 |
-| Only 1,000 | 0.21 | 124.6 | 12 / 221 / none | 1000 | 140.2 | 10.6 | 88 |
-| Only 10,000 | 0.02 | – | 353 / none / none | 10000 | 138.8 | 10.8 | 85 |
-| Small ladder 5–100 | 4.33 | 8.7 | 3 / 19 / 36 | 37 | 137.8 | 10.6 | 83 |
-| Wide 10–10,000 | 3.63 | 10.4 | 4 / 16 / 44 | 102 | 138.1 | 10.6 | 85 |
+| Listing | Donations/h | Median gap (min) | Passers before 1st donation (p10/median/p90) | Avg gift | NPC→NPC/h | Peak NPCs |
+|---|---|---|---|---|---|---|
+| Only 100 | 1.62 | 20.7 | 4 / 37 / 136 | 100 | 138.1 | 84 |
+| Only 1,000 | 0.21 | 124.6 | 12 / 221 / none | 1000 | 140.2 | 88 |
+| Only 10,000 | 0.02 | – | 353 / none / none | 10000 | 138.8 | 85 |
+| Small ladder 5–100 | 4.33 | 8.7 | 3 / 19 / 36 | 37 | 137.8 | 83 |
+| Wide 10–10,000 | 3.63 | 10.4 | 4 / 16 / 44 | 102 | 138.1 | 85 |
 
 ## Ordinary server
 
-| Listing | Donations/h | Median gap (min) | Passers before 1st donation (p10/median/p90) | Avg gift | NPC→NPC/h | Requests/h | Peak NPCs |
-|---|---|---|---|---|---|---|---|
-| Only 100 | 1.33 | 28.7 | 3 / 24 / 111 | 100 | 139.6 | 10.6 | 87 |
-| Only 1,000 | 0.16 | 120.4 | 50 / 299 / none | 1000 | 136.0 | 10.6 | 81 |
-| Only 10,000 | 0.01 | – | none / none / none | 10000 | 137.4 | 10.5 | 83 |
-| Small ladder 5–100 | 3.92 | 10.2 | 2 / 12 / 56 | 31 | 141.4 | 10.7 | 83 |
-| Wide 10–10,000 | 3.60 | 11.1 | 5 / 16 / 48 | 105 | 139.5 | 10.7 | 90 |
+| Listing | Donations/h | Median gap (min) | Passers before 1st donation (p10/median/p90) | Avg gift | NPC→NPC/h | Peak NPCs |
+|---|---|---|---|---|---|---|
+| Only 100 | 1.33 | 28.7 | 3 / 24 / 111 | 100 | 139.6 | 87 |
+| Only 1,000 | 0.16 | 120.4 | 50 / 299 / none | 1000 | 136.0 | 81 |
+| Only 10,000 | 0.01 | – | none / none / none | 10000 | 137.4 | 83 |
+| Small ladder 5–100 | 3.92 | 10.2 | 2 / 12 / 56 | 31 | 141.4 | 83 |
+| Wide 10–10,000 | 3.60 | 11.1 | 5 / 16 / 48 | 105 | 139.5 | 90 |
 
 Conservation check passed for every run (no NPC currency created or lost).
-
 ## Reading the results against the brief's references (§3.5, §4.3)
 | Reference | Result with current proposals |
 |---|---|
@@ -33,8 +32,7 @@ Conservation check passed for every run (no NPC currency created or lost).
 | 10,000 rare, luck-driven | ~0.01–0.02 per hour; mostly from rare NPCs or wealthy servers |
 | Up to 100 NPCs | Arrival rate 7/min gives 80–90 concurrent at peak, under the 100 cap |
 
-**Open item:** NPC requests to the player run about 10/hour, limited by the 4-minute cooldown. Request frequency
-is an open owner decision (§10). If that feels too frequent, lower `Request.chancePerCheck` or raise `playerCooldownSeconds`.
+**Requests:** see REQUEST_FREQUENCY.md for the frequency study (owner decision pending).
 
 Listing several amounts converts better than one large amount because each NPC picks the listed amount closest to
 what it comfortably gives. Presentation (appeal) moves visit odds by at most ±12.5% and donation odds by at most ±10%, so

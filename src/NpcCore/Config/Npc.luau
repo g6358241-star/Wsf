@@ -147,6 +147,7 @@ return {
 	},
 
 	Request = {
+		-- UNDER EVALUATION (owner, 2026-11-12): not final. Compare settings in docs/REQUEST_FREQUENCY.md.
 		chancePerCheck = 0.02, -- scaled by sociability; checked while an NPC owns a stand
 		checkIntervalSeconds = 30,
 		playerCooldownSeconds = 240,

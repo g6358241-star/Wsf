@@ -48,7 +48,7 @@ local function lerp(a: number, b: number, t: number): number
 	return a + (b - a) * t
 end
 
-local PRIMARY = "Primary"
+local PRIMARY = require("../Config/Economy").Currency.Primary
 
 function NpcBrain.fromProfile(profile: NpcFactory.Profile, now: number, rng: Rng.Rng): Agent
 	local tr = profile.traits

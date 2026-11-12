@@ -78,3 +78,9 @@ offline earnings, luck cap, VIP pass, primary-currency packs.
   (approach and queue spots per booth) are needed.
 - **37 MB place file** with mostly unused backups slows saves and loads in Studio.
 - The test currency `DCoins` is persisted under `HarborProfiles_TestCurrency_v2`; switching to real currencies needs a schema v2 migration.
+
+## 4. Status after the owner's decisions (2026-11-12)
+See [DECISIONS.md](DECISIONS.md). Conflicts 1–5 above are resolved in code: the NPC timer is replaced by the autonomous
+director, player-to-player donations and Robux transfers are removed, Pearls are no longer sold, rewards never grant DCoins,
+and the NPC population is dynamic up to 100. Conflict 6 (sidebar visuals) waits for the UI concept choice. The backups were
+moved to a separate archive file with the original place left untouched.
