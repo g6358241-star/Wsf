@@ -169,9 +169,161 @@ do
 	local raisedAtRelease = Profiles.get(player).CoinsRaised
 	sched:advance(15 * 60)
 	check(Profiles.get(player).CoinsRaised == raisedAtRelease, "no donations credited after the stand was released")
-	player.Character.HumanoidRootPart.Position = boothNear(world, "Booth_030")
-	fire("Claim", "Booth_030")
-	check(table.concat(Booths.entries.Booth_030.offers, ",") == "10,100,1000", "re-claim restores saved offers")
+	local freeBooth
+	for id, e in Booths.entries do
+		if not e.owner and not e.npc and (not freeBooth or id < freeBooth) then
+			freeBooth = id
+		end
+	end
+	player.Character.HumanoidRootPart.Position = boothNear(world, freeBooth)
+	fire("Claim", freeBooth)
+	check(table.concat(Booths.entries[freeBooth].offers, ",") == "10,100,1000", "re-claim restores saved offers")
+
+	-- NPC donation requests: decline, no answer, accept + donate, accept + ignore, forged input
+	do
+		local NpcConfig = world.require(world.find("ServerScriptService.NpcCore.Config.Npc"))
+		local SecondaryCurrency = world.require(world.find("ServerScriptService.NpcCore.Logic.SecondaryCurrency"))
+		local Requests = world.require(world.find("ServerScriptService.HarborServer.Requests"))
+		local Director = world.require(world.find("ServerScriptService.HarborServer.NpcDirector"))
+		NpcConfig.Request.chancePerCheck = 1
+		NpcConfig.Request.playerCooldownSeconds = 5
+		Profiles.mutate(player, function(d)
+			d.Coins += 100000
+			return true
+		end)
+		local function waitFor(kind, fromIndex, timeout)
+			local waited = 0
+			while waited < timeout do
+				for i = fromIndex, #world.clientEvents do
+					local e = world.clientEvents[i]
+					if e.player == player and e.args[1] == kind then
+						return e.args[2], i
+					end
+				end
+				sched:advance(1)
+				waited += 1
+			end
+			return nil, #world.clientEvents
+		end
+		local function memoryHas(event)
+			for _, mem in Profiles.get(player).Memories do
+				if table.find(mem.e, event) then
+					return true
+				end
+			end
+			return false
+		end
+		local mark = #world.clientEvents + 1
+
+		-- 1. Decline: personality reaction, small relationship penalty, no Coins or DCoins change
+		local req
+		req, mark = waitFor("NpcRequest", mark, 900)
+		check(req ~= nil, "an NPC with a stand came to ask the player for support")
+		local before = table.clone(Profiles.get(player))
+		local repBefore = before.Reputation.score
+		local said = #world.require(world.find("ServerScriptService.HarborServer.NPCService")).said
+		fire("RequestAnswer", req.Id, false)
+		local closed
+		closed, mark = waitFor("NpcRequestClosed", mark, 5)
+		check(closed and closed.Outcome == "Declined", "decline closes the request")
+		check(memoryHas("DeclinedRequest"), "the NPC remembers the refusal")
+		check(Profiles.get(player).Reputation.score < repBefore, "declining lowers reputation slightly")
+		check(Profiles.get(player).Coins == before.Coins and Profiles.get(player).DCoins == before.DCoins, "declining moves no currency")
+		check(#world.require(world.find("ServerScriptService.HarborServer.NPCService")).said > said, "the NPC reacted out loud")
+
+		-- 2. No answer: closes without any penalty
+		req, mark = waitFor("NpcRequest", mark + 1, 900)
+		check(req ~= nil, "a second request arrived after the cooldown")
+		repBefore = Profiles.get(player).Reputation.score
+		closed, mark = waitFor("NpcRequestClosed", mark, 30)
+		check(closed and closed.Outcome == "NoAnswer", "unanswered prompt expires")
+		check(Profiles.get(player).Reputation.score == repBefore, "no penalty for not answering")
+
+		-- 3. Accept, follow, donate one of the NPC's own amounts
+		req, mark = waitFor("NpcRequest", mark + 1, 900)
+		check(req ~= nil, "a third request arrived")
+		fire("RequestAnswer", req.Id, true)
+		local update
+		update, mark = waitFor("NpcRequestUpdate", mark, 5)
+		check(update and update.Stage == "Leading", "accepting means following, not paying")
+		local st = Requests.active[player]
+		local agent = st and st.ctx.live.agent
+		check(agent ~= nil and agent.ownedStandId ~= nil, "the requesting NPC owns a stand")
+		local coinsBefore, dcoinsBefore = Profiles.get(player).Coins, Profiles.get(player).DCoins
+		check(coinsBefore == before.Coins, "no Coins taken on accept")
+		player.Character.HumanoidRootPart.Position = boothNear(world, agent.ownedStandId)
+		local stand
+		stand, mark = waitFor("NpcStand", mark, 60)
+		check(stand ~= nil, "the donation panel opens only at the NPC's stand")
+		check(stand and #stand.Offers == #agent.offers, "the panel lists exactly this NPC's own amounts")
+		fire("RequestDonate", req.Id, 999)
+		check(Profiles.get(player).Coins == coinsBefore, "forged offer index rejected")
+		local amount = agent.offers[1]
+		fire("RequestDonate", req.Id, 1)
+		local donated
+		donated, mark = waitFor("NpcDonated", mark, 5)
+		check(donated ~= nil, "donation confirmed")
+		local reward = SecondaryCurrency.reward(amount)
+		local d = Profiles.get(player)
+		check(donated and donated.DCoins == reward and d.DCoins == dcoinsBefore + reward, "DCoins granted by the deterministic formula (" .. reward .. ")")
+		check(donated and d.Coins == coinsBefore - amount + donated.Returned, "Coins debited exactly once (return gift " .. (donated and donated.Returned or 0) .. ")")
+		check(memoryHas("DonatedToNpc"), "the NPC remembers the donation")
+		local coinsAfter = d.Coins
+		fire("RequestDonate", req.Id, 1)
+		check(Profiles.get(player).Coins == coinsAfter, "repeating the donation request charges nothing")
+		check(lastNotice(world, player) == "This request is no longer active.", "replay rejected with a message")
+
+		-- 4. Accept, then never come: penalised only after grace + the NPC's patience
+		player.Character.HumanoidRootPart.Position = roblox.Vector3.new(0, 42, -400)
+		req, mark = waitFor("NpcRequest", mark + 1, 900)
+		check(req ~= nil, "a fourth request arrived")
+		repBefore = Profiles.get(player).Reputation.score
+		fire("RequestAnswer", req.Id, true)
+		sched:advance(20)
+		check(Requests.active[player] ~= nil and Profiles.get(player).Reputation.score == repBefore, "no penalty during the grace period")
+		closed, mark = waitFor("NpcRequestClosed", mark, 200)
+		check(closed and closed.Outcome == "Ignored", "the NPC gives up after its patience runs out")
+		check(memoryHas("IgnoredAfterAccept"), "the NPC remembers being ignored")
+		check(Profiles.get(player).Reputation.score < repBefore, "ignoring costs reputation")
+		local log = Profiles.get(player).Reputation.log
+		check(#log > 0 and log[#log].reason == "IgnoredAfterAccept", "reputation history explains the change")
+
+		-- 5. Forged request ids are rejected
+		fire("RequestAnswer", 123456, true)
+		check(lastNotice(world, player) == "This request is no longer active.", "forged request id rejected")
+
+		-- Returning NPCs: remembered personas come back with the same name
+		NpcConfig.Request.chancePerCheck = 0
+		NpcConfig.Population.returningNpcChance = 1
+		local dir = Director.current
+		-- Seed a memory of an NPC that is not on the server, as a previous session would have left it.
+		local NpcFactory = world.require(world.find("ServerScriptService.NpcCore.Logic.NpcFactory"))
+		local Rng = world.require(world.find("ServerScriptService.NpcCore.Logic.Rng"))
+		local past = NpcFactory.createPersona(Rng.new(1), "old", "Pyesterday", dir.tier, 0)
+		Profiles.recordRelationship(player, { id = "Pyesterday", name = past.name, traits = past.traits }, "DonatedToNpc")
+		local returningBefore = dir.stats.returning
+		sched:advance(10 * 60)
+		check(dir.stats.returning > returningBefore, "remembered NPCs return (" .. (dir.stats.returning - returningBefore) .. ")")
+		local matched = false
+		for _, l in dir.live do
+			local mem = Profiles.get(player).Memories[l.agent.personaId]
+			if mem and mem.n == l.agent.name then
+				matched = true
+			end
+		end
+		check(matched, "a returning NPC keeps the name the player remembers")
+		NpcConfig.Population.returningNpcChance = 0.08
+		local balanced = dir:audit()
+		check(balanced, "NPC world still conserves Coins after player donations and return gifts")
+		print(string.format("  request outcomes: %s", (function()
+			local parts = {}
+			for k, v in Requests.outcomes do
+				table.insert(parts, k .. "=" .. v)
+			end
+			table.sort(parts)
+			return table.concat(parts, " ")
+		end)()))
+	end
 
 	-- Stress: fill to the 100-NPC cap
 	world.workspace:SetAttribute("NpcStressTarget", 100)
@@ -191,7 +343,7 @@ do
 	-- Player leaves: stand released, profile closed, simulation continues without errors
 	world.removePlayer(player)
 	sched:advance(120)
-	check(Booths.owned[101] == nil and Booths.entries.Booth_030.owner == nil, "stand released when the player leaves")
+	check(Booths.owned[101] == nil and Booths.entries[freeBooth].owner == nil, "stand released when the player leaves")
 	check(Profiles.Active[player] == nil, "profile closed on leave")
 	sched:advance(30 * 60)
 	check(#sched.errors == 0, "no script errors in World A (" .. #sched.errors .. ")")
@@ -218,6 +370,13 @@ store["HarborProfiles_TestCurrency_v2"] = {
 			Claims = 2, LastDaily = -1, RewardIndex = 3, Inventory = { Sailor = true }, Equipped = {}, Quests = {},
 			Receipts = { ["out:202:abc"] = true }, Passes = {}, BoostUntil = 0,
 			Outbox = { ["202:abc"] = { Target = 303, Sender = 202, Amount = 25 } },
+		},
+		Session = nil,
+	},
+	u_505 = {
+		Data = {
+			Version = 2, Coins = 1000, Pearls = 0, DCoins = 0, Outbox = {},
+			Offline = { lastSeenAt = 1_800_000_000 - 10 * 3600, avgHourly = 100, last = { amount = 0, awaySeconds = 0, avgHourly = 0, t = 0 } },
 		},
 		Session = nil,
 	},
@@ -278,6 +437,30 @@ do
 
 	world.removePlayer(sender)
 	world.removePlayer(receiver)
+	sched:advance(5)
+
+	-- Offline earnings: 10 h away at an average of 100 Coins/h and the 5% rate = 50 Coins, paid once
+	local offlineMark = #world.clientEvents + 1
+	local returning = world.addPlayer(505, "Returning")
+	sched:advance(2)
+	local od = Profiles.get(returning)
+	check(od and od.Coins == 1050, "offline earnings credited on join (" .. tostring(od and od.Coins) .. ")")
+	local last = od and od.Stats.history[#od.Stats.history]
+	check(last and last.source == "OfflineEarnings" and last.amount == 50, "offline payout recorded in history")
+	local offlineEvent
+	for i = offlineMark, #world.clientEvents do
+		local e = world.clientEvents[i]
+		if e.player == returning and e.args[1] == "Offline" then
+			offlineEvent = e.args[2]
+		end
+	end
+	check(offlineEvent and offlineEvent.amount == 50 and offlineEvent.avgHourly == 100, "player told how much, and the average used")
+	world.removePlayer(returning)
+	sched:advance(60)
+	local again = world.addPlayer(505, "Returning")
+	sched:advance(2)
+	check(Profiles.get(again).Coins == 1050, "rejoining a minute later pays nothing extra")
+	world.removePlayer(again)
 	sched:advance(5)
 	local saved = store["HarborProfiles_TestCurrency_v2"].u_202
 	check(saved.Data.Version == 2 and saved.Session == nil, "saved as v2 and session lease released")

@@ -10,6 +10,7 @@ Relationships.EventImpact = {
 	DeclinedRequest = -3,
 	IgnoredAfterAccept = -10, -- accepted, then never came (after the grace period)
 	ReceivedFromNpc = 2, -- the NPC donated to the player's stand
+	LeftAtStand = -2, -- followed the NPC, then left without donating although an offer was affordable
 }
 
 -- How strongly each event feeds the player's overall reputation, relative to the NPC opinion change.

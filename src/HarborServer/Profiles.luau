@@ -6,9 +6,12 @@ local Http = game:GetService("HttpService")
 local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("HarborShared").Config)
 local NpcCore = game:GetService("ServerScriptService"):WaitForChild("NpcCore")
 local IncomeStats = require(NpcCore.Logic.IncomeStats)
+local Relationships = require(NpcCore.Logic.Relationships)
+local OfflineEarnings = require(NpcCore.Logic.OfflineEarnings)
+local SecondaryCurrency = require(NpcCore.Logic.SecondaryCurrency)
 local PersistenceConfig = require(NpcCore.Config.Persistence)
 local OfflineConfig = require(NpcCore.Config.Offline)
-local Profiles = {Active = {}, Changed = Instance.new("BindableEvent"), DonationDelivered=Instance.new("BindableEvent")}
+local Profiles = {Active = {}, Changed = Instance.new("BindableEvent"), DonationDelivered=Instance.new("BindableEvent"), OfflineCredited=Instance.new("BindableEvent")}
 Profiles.BeforeClose = nil :: ((Player, any) -> ())?
 local store
 local memory = RunService:IsStudio() and Config.StudioMemoryOnly
@@ -35,7 +38,9 @@ local function defaults()
         Donated = 0, Received = 0, Claims = 0, LastDaily = -1, RewardIndex = 0,
         Inventory = {}, Equipped = {}, Quests = {}, Receipts = {}, Passes = {}, BoostUntil = 0,
         CoinsRaised = 0, CoinsDonated = 0, LegacyDCoins = 0, MigratedTestDCoins = false,
-        Stand = {Offers = {}}, Stats = IncomeStats.new()}
+        Stand = {Offers = {}}, Stats = IncomeStats.new(),
+        Memories = {}, Reputation = {score = 0, log = {}},
+        Offline = {lastSeenAt = 0, avgHourly = 0, last = {amount = 0, awaySeconds = 0, avgHourly = 0, t = 0}}}
 end
 local function isCount(v)
     return type(v) == "number" and v == v and v % 1 == 0 and v >= 0 and v < 2^53
@@ -57,6 +62,35 @@ local function checkStats(stats)
             error("Invalid history record")
         end
     end
+end
+local memoryOptions = {
+    retentionSeconds = PersistenceConfig.Memory.retentionSeconds,
+    maxEventsPerNpc = PersistenceConfig.Memory.maxEventsPerNpc,
+    maxNpcs = PersistenceConfig.Memory.maxNpcs,
+    maxReasonLog = PersistenceConfig.Reputation.maxReasonLog,
+}
+Profiles.memoryOptions = memoryOptions
+local function finite(v)
+    return type(v) == "number" and v == v and math.abs(v) ~= math.huge
+end
+-- NPC memories, reputation and offline data: structural checks only (values may be fractional).
+local function checkSocial(data)
+    for id, mem in data.Memories do
+        if type(id) ~= "string" or #id > 40 or type(mem) ~= "table" or not finite(mem.s) or not finite(mem.t)
+            or type(mem.n) ~= "string" or type(mem.e) ~= "table" then
+            error("Invalid NPC memory")
+        end
+        for _, code in mem.e do if type(code) ~= "string" then error("Invalid NPC memory event") end end
+    end
+    local rep = data.Reputation
+    if not finite(rep.score) or type(rep.log) ~= "table" then error("Invalid reputation") end
+    for _, entry in rep.log do
+        if type(entry) ~= "table" or type(entry.reason) ~= "string" or type(entry.npc) ~= "string" or not finite(entry.delta) or not finite(entry.t) then
+            error("Invalid reputation log")
+        end
+    end
+    local off = data.Offline
+    if not finite(off.lastSeenAt) or not finite(off.avgHourly) or type(off.last) ~= "table" then error("Invalid offline data") end
 end
 local function sanitizeOffers(offers)
     local clean, seen = {}, {}
@@ -95,6 +129,8 @@ local function normalize(raw)
     if type(data.Stand.Offers) ~= "table" then error("Invalid stand") end
     data.Stand.Offers = sanitizeOffers(data.Stand.Offers)
     checkStats(data.Stats)
+    checkSocial(data)
+    Relationships.expire(data.Memories, os.time(), memoryOptions)
     -- OPEN owner decision (Config.Migration): park pre-decision test DCoins without deleting them.
     if Config.Migration.QuarantineTestDCoins and not data.MigratedTestDCoins then
         data.LegacyDCoins += data.DCoins
@@ -127,7 +163,7 @@ function Profiles.public(player)
     local data = Profiles.get(player)
     if not data then return {Ready = false} end
     local result = {}
-    for _, key in {"DCoins", "Coins", "Pearls", "XP", "PlaySeconds", "Donated", "Received", "LastDaily", "Inventory", "Equipped", "Quests", "BoostUntil", "Claims", "CoinsRaised", "CoinsDonated", "Stand"} do
+    for _, key in {"DCoins", "Coins", "Pearls", "XP", "PlaySeconds", "Donated", "Received", "LastDaily", "Inventory", "Equipped", "Quests", "BoostUntil", "Claims", "CoinsRaised", "CoinsDonated", "Stand", "Reputation"} do
         result[key] = clone(data[key])
     end
     result.Ready = true
@@ -148,10 +184,38 @@ function Profiles.mutate(player, callback)
     if accepted then Profiles.Changed:Fire(player) end
     return accepted == true, message
 end
+-- Offline earnings (§6.3–6.4). Runs inside the load transform, so the credit and the new lastSeenAt are written
+-- in the same atomic DataStore update as the session lease: a retry or crash can never pay twice.
+local function applyOffline(data, now)
+    local off = data.Offline
+    local result
+    if off.lastSeenAt > 0 and now > off.lastSeenAt then
+        local res = OfflineEarnings.compute(off.avgHourly, now - off.lastSeenAt)
+        if res.amount > 0 and data.Coins + res.amount <= Config.MaxBalance then
+            data.Coins += res.amount
+            IncomeStats.record(data.Stats, {
+                id = 0, t = now, fromId = "offline", fromName = "Offline earnings", amount = res.amount,
+                currency = PRIMARY, source = "OfflineEarnings",
+            }, statsOptions)
+            off.last = {amount = res.amount, awaySeconds = res.awaySeconds, avgHourly = res.averageHourly, t = now}
+            result = {amount = res.amount, awaySeconds = res.awaySeconds, creditedHours = res.creditedHours, avgHourly = res.averageHourly}
+        end
+    end
+    off.lastSeenAt = now
+    return result
+end
+Profiles.applyOffline = applyOffline
+-- Snapshot taken on every save (PROPOSAL §6.5: snapshot, not a rolling window recomputed while offline).
+local function stampOffline(data)
+    local now = os.time()
+    data.Offline.lastSeenAt = now
+    data.Offline.avgHourly = IncomeStats.averageHourly(data.Stats, now, OfflineConfig.averageWindowHours)
+end
 function Profiles.save(player, release)
     local r = Profiles.Active[player]
     if not r or r.Busy or r.Lost then return false end
     r.Busy = true
+    stampOffline(r.Data)
     local snapshot = clone(r.Data)
     local ok, result = true, nil
     if not memory then
@@ -207,7 +271,7 @@ end
 function Profiles.load(player)
     if shuttingDown then player:Kick("Server is closing. Please rejoin."); return end
     if Profiles.Active[player] then return end
-    local data
+    local data, offline
     local ok, result = true, nil
     if memory then data = defaults() else
         ok, result = retry(function()
@@ -215,6 +279,7 @@ function Profiles.load(player)
                 if old ~= nil and type(old) ~= "table" then error("Invalid record") end
                 if old and old.Session and old.Session.Id ~= session and old.Session.Until > os.time() then return nil end
                 local value = old and normalize(old.Data) or defaults()
+                offline = applyOffline(value, os.time())
                 return {Data = value, Session = {Id = session, Until = os.time() + Config.LeaseSeconds}}
             end)
         end)
@@ -228,6 +293,7 @@ function Profiles.load(player)
     if not player.Parent or shuttingDown then Profiles.close(player); return end
     player:SetAttribute("HarborProfileReady", true)
     Profiles.Changed:Fire(player)
+    if offline then Profiles.OfflineCredited:Fire(player, offline) end
 end
 function Profiles.close(player)
     local r = Profiles.Active[player]
@@ -315,6 +381,55 @@ function Profiles.setStandOffers(player, offers)
         data.Stand.Offers=sanitizeOffers(offers)
         return true
     end)
+end
+-- Records a meaningful interaction with an NPC persona (§12.9): refreshes its 3-day memory, updates its
+-- opinion and the player's overall reputation, with the reason kept for the UI (§12.11).
+function Profiles.recordRelationship(player, persona, event)
+    return Profiles.mutate(player,function(data)
+        Relationships.record(data.Memories,data.Reputation,persona.id,persona.name,persona.traits,event,os.time(),memoryOptions)
+        return true
+    end)
+end
+function Profiles.opinion(player, personaId)
+    local data=Profiles.get(player)
+    if not data or not personaId then return 0 end
+    return Relationships.opinion(data.Memories,personaId,os.time(),memoryOptions)
+end
+-- Personas this player remembers (unexpired), for NPCs returning in a later session (§12.1).
+function Profiles.rememberedPersonas(player)
+    local data=Profiles.get(player);local list={}
+    if not data then return list end
+    local now=os.time()
+    for id,mem in data.Memories do
+        if now-mem.t<=memoryOptions.retentionSeconds then table.insert(list,{id=id,name=mem.n}) end
+    end
+    table.sort(list,function(a,b) return a.id<b.id end)
+    return list
+end
+-- Profile side of a player donation at an NPC's stand (§5.2, §12.8 step 7). Non-yielding and all-or-nothing:
+-- debit Coins, always grant the deterministic DCoins reward, credit an optional return gift, remember it.
+-- The caller moves the Coins into the NPC world in the same synchronous step.
+function Profiles.donateToNpc(player, amount, persona, returned)
+    if type(amount)~="number" or amount~=amount or amount%1~=0 or amount<1 then return false,"Invalid amount.",0 end
+    local reward=SecondaryCurrency.reward(amount)
+    local ok,message=Profiles.mutate(player,function(data)
+        if data.Coins<amount then return false,"Not enough Coins." end
+        if data.Coins-amount+returned>Config.MaxBalance or data.DCoins+reward>Config.MaxBalance then return false,"Balance limit reached." end
+        data.Coins-=amount
+        data.CoinsDonated+=amount
+        data.DCoins+=reward
+        if returned>0 then
+            data.Coins+=returned
+            data.CoinsRaised+=returned
+            IncomeStats.record(data.Stats,{
+                id=0,t=os.time(),fromId=persona.id,fromName=persona.name,amount=returned,
+                currency=PRIMARY,source="NpcReturnDonation",
+            },statsOptions)
+        end
+        Relationships.record(data.Memories,data.Reputation,persona.id,persona.name,persona.traits,"DonatedToNpc",os.time(),memoryOptions)
+        return true
+    end)
+    return ok,message,(ok and reward or 0)
 end
 
 function Profiles.init()

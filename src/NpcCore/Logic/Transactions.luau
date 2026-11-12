@@ -70,16 +70,25 @@ function Transactions.playerDonateToNpc(
 	Ledger.mint(ledger, txId .. ":sec", player, SECONDARY, reward, "SecondaryReward")
 
 	local returned = 0
-	local r = EconomyConfig.ReturnDonation
-	local chance = math.clamp(r.baseChance * returnWillingness * (0.5 + npc.traits.generosity), 0, 1)
-	if rng:chance(chance) then
-		local want = math.max(1, math.floor(amount * rng:range(r.fractionMin, r.fractionMax)))
+	local want = Transactions.rollReturn(npc, amount, returnWillingness, rng)
+	if want > 0 then
 		local source = if Ledger.balance(npc.budget, PRIMARY) >= want then npc.budget else npc.wallet
 		if Ledger.balance(source, PRIMARY) >= want and Ledger.transfer(ledger, txId .. ":ret", source, player, PRIMARY, want, true) then
 			returned = want
 		end
 	end
 	return { ok = true, err = nil, secondary = reward, returned = returned }
+end
+
+-- The NPC's separate decision to return a gift (§5.2): 0 = no return, else the Coins it wants to give back.
+-- Offended NPCs (low `returnWillingness`) return less often (§12.9).
+function Transactions.rollReturn(npc: NpcBrain.Agent, amount: number, returnWillingness: number, rng: Rng.Rng): number
+	local r = EconomyConfig.ReturnDonation
+	local chance = math.clamp(r.baseChance * returnWillingness * (0.5 + npc.traits.generosity), 0, 1)
+	if not rng:chance(chance) then
+		return 0
+	end
+	return math.max(1, math.floor(amount * rng:range(r.fractionMin, r.fractionMax)))
 end
 
 return Transactions

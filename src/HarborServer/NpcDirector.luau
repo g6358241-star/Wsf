@@ -22,11 +22,15 @@ export type Movement = {
 	spawn: (spec: { id: string, name: string, seed: number }, onReady: (handle: any?) -> ()) -> (),
 	-- Walks to the booth's visitor side. Exactly one of onArrive / onFail is called.
 	visitBooth: (handle: any, boothId: string, onArrive: () -> (), onFail: () -> ()) -> (),
-	-- Stays at the booth (facing it) for `seconds`, then calls onDone.
+	-- Stays still (at the booth or wherever it stands, facing its target) for `seconds`, then calls onDone.
 	hold: (handle: any, seconds: number, onDone: () -> ()) -> (),
 	-- Strolls to another spot on the map, then calls onDone.
 	wander: (handle: any, onDone: () -> ()) -> (),
 	despawn: (handle: any) -> (),
+	-- Walks up to a player (re-targets if they move). Exactly one of onArrive / onFail is called.
+	approachPlayer: ((handle: any, player: any, onArrive: () -> (), onFail: () -> ()) -> ())?,
+	say: (handle: any, text: string) -> (),
+	model: ((handle: any) -> any?)?,
 }
 
 export type Deps = {
@@ -35,11 +39,15 @@ export type Deps = {
 	movement: Movement,
 	booths: any, -- Booths module
 	economy: any, -- Economy module
+	requests: any?, -- Requests module (NPC asks a player for support)
 	getPlayer: (userId: number) -> any?,
 	notify: (player: any, npcName: string, amount: number, handle: any) -> (),
 	publish: ((rows: { any }) -> ())?,
 	seed: (number | string)?,
 	targetPopulation: (() -> number)?, -- optional override (Studio stress test)
+	willingness: ((userId: number, personaId: string) -> number)?, -- NPC's opinion of the player as a multiplier
+	rememberedPersonas: (() -> { { id: string, name: string } })?,
+	forceRequests: (() -> boolean)?, -- Studio testing: every stand NPC asks at each check
 }
 
 type Live = {
@@ -64,9 +72,11 @@ function Director.new(deps: Deps)
 		nextId = 0,
 		departedFunds = 0,
 		playerAccounts = {} :: { [number]: Ledger.Account },
+		personasInUse = {} :: { [string]: boolean },
 		running = false,
 		stats = {
 			spawned = 0, departed = 0, passes = 0, inspections = 0, decisions = 0, playerDonations = 0,
+			requests = 0, requestDonations = 0, requestCoins = 0, returning = 0,
 			playerCoins = 0, npcDonations = 0, npcCoins = 0, refills = 0, standClaims = 0, standGone = 0,
 			visitFailures = 0, creditFailures = 0, reasons = {} :: { [string]: number },
 		},
@@ -98,7 +108,8 @@ function Director.audit(self): (boolean, number, number)
 	for _, account in self.playerAccounts do
 		held += Ledger.balance(account, PRIMARY)
 	end
-	local minted = self.ledger.minted.NpcSpawnWallet or 0
+	-- PlayerInflow = Coins players donated to NPCs (debited from their profiles), so it counts as money in.
+	local minted = (self.ledger.minted.NpcSpawnWallet or 0) + (self.ledger.minted.PlayerInflow or 0)
 	return held == minted, minted, held
 end
 
@@ -117,11 +128,17 @@ function Director.leave(self, l: Live, reason: string)
 	end
 	-- Funds leave the server with the NPC; they are never destroyed or handed to anyone else.
 	self.departedFunds += NpcBrain.totalFunds(agent)
+	if agent.personaId then
+		self.personasInUse[agent.personaId] = nil
+	end
 	self.live[agent.id] = nil
 	self.active -= 1
 	self.stats.departed += 1
 	agent.leaveReason = reason
 	count(self, reason)
+	if self.deps.requests then
+		self.deps.requests.npcGone(agent.id)
+	end
 	self.deps.movement.despawn(l.handle)
 end
 
@@ -133,16 +150,24 @@ function Director.lost(self, npcId: string)
 	end
 end
 
+function Director.nextTx(self, prefix: string): string
+	self.txSeq = (self.txSeq or 0) + 1
+	return prefix .. ":" .. self.txSeq
+end
+
 function Director.donate(self, l: Live, view: NpcBrain.StandView)
 	local agent, rng = l.agent, self.rng
 	self.stats.decisions += 1
-	local decision = NpcBrain.decideDonation(agent, view, 1, rng)
+	-- The NPC's opinion of a player stand owner changes its willingness (§12.9); NPC owners are neutral.
+	local ownerUserId = tonumber(string.match(view.ownerId or "", "^p:(%d+)$"))
+	local willingness = if ownerUserId and self.deps.willingness then self.deps.willingness(ownerUserId, agent.personaId or agent.id) else 1
+	local decision = NpcBrain.decideDonation(agent, view, willingness, rng)
 	if decision.reason == "TooExpensive" or decision.reason == "NoBudget" then
 		local top = NpcBrain.refillAmount(agent, self.deps.now(), rng)
 		l.txCount += 1
 		if top > 0 and Transactions.withdraw(self.ledger, agent.id .. ":r" .. l.txCount, agent, top) then
 			self.stats.refills += 1
-			decision = NpcBrain.decideDonation(agent, view, 1, rng)
+			decision = NpcBrain.decideDonation(agent, view, willingness, rng)
 		end
 	end
 	local amount = decision.amount
@@ -199,18 +224,73 @@ function Director.runStand(self, l: Live)
 	end
 	agent.ownedStandId = standId
 	self.stats.standClaims += 1
-	local duration = NpcBrain.standDuration(agent, rng)
-	self.deps.movement.visitBooth(l.handle, standId, function()
-		-- Stays at its stand (AFK-like) until its own time is up, then leaves (§12.5).
-		self.deps.movement.hold(l.handle, duration, function()
-			if self.live[agent.id] == l then
-				self:leave(l, "StandDone")
-			end
-		end)
+	agent.standUntil = self.deps.now() + NpcBrain.standDuration(agent, rng)
+	self:goToStand(l)
+	return true
+end
+
+function Director.goToStand(self, l: Live)
+	local agent = l.agent
+	if self.live[agent.id] ~= l or not agent.ownedStandId then
+		return
+	end
+	self.deps.movement.visitBooth(l.handle, agent.ownedStandId, function()
+		self:standLoop(l)
 	end, function()
 		if self.live[agent.id] == l then
 			self:leave(l, "StandUnreachable")
 		end
+	end)
+end
+
+-- Stays at its stand (AFK-like) until its own time is up, then leaves (§12.5). Every check interval it may
+-- decide to go and ask a player for support (§5, §12.8).
+function Director.standLoop(self, l: Live)
+	local agent = l.agent
+	if self.live[agent.id] ~= l then
+		return
+	end
+	local remaining = (agent.standUntil or 0) - self.deps.now()
+	if remaining <= 0 then
+		self:leave(l, "StandDone")
+		return
+	end
+	self.deps.movement.hold(l.handle, math.min(remaining, NpcConfig.Request.checkIntervalSeconds), function()
+		if self.live[agent.id] ~= l then
+			return
+		end
+		local wants = (self.deps.forceRequests and self.deps.forceRequests()) or NpcBrain.wantsToRequest(agent, self.rng)
+		if self.deps.now() < (agent.standUntil or 0) and wants and self:tryRequest(l) then
+			return
+		end
+		self:standLoop(l)
+	end)
+end
+
+function Director.tryRequest(self, l: Live): boolean
+	local requests = self.deps.requests
+	local approach = self.deps.movement.approachPlayer
+	if not requests or not approach then
+		return false
+	end
+	local agent = l.agent
+	local player = requests.reserve(agent)
+	if not player then
+		return false
+	end
+	self.stats.requests += 1
+	local function backToStand()
+		self:goToStand(l)
+	end
+	approach(l.handle, player, function()
+		if self.live[agent.id] ~= l then
+			requests.release(player, agent.id)
+			return
+		end
+		requests.open(player, { director = self, live = l, onDone = backToStand })
+	end, function()
+		requests.release(player, agent.id)
+		backToStand()
 	end)
 	return true
 end
@@ -285,6 +365,22 @@ function Director.step(self, l: Live)
 	end)
 end
 
+-- A remembered NPC may come back in a later session (§12.1) with its own name and personality.
+function Director.pickPersona(self): (string, boolean)
+	local rng = self.rng
+	local remembered = self.deps.rememberedPersonas and self.deps.rememberedPersonas() or {}
+	local candidates = {}
+	for _, p in remembered do
+		if not self.personasInUse[p.id] then
+			table.insert(candidates, p.id)
+		end
+	end
+	if #candidates > 0 and rng:chance(NpcConfig.Population.returningNpcChance) then
+		return candidates[rng:int(1, #candidates)], true
+	end
+	return "P" .. rng:int(1, 2 ^ 30), false
+end
+
 function Director.spawn(self)
 	if not self.running or self.active + self.pending >= self:target() then
 		return
@@ -292,11 +388,14 @@ function Director.spawn(self)
 	local rng = self.rng
 	self.nextId += 1
 	local id = "N" .. self.nextId
-	local profile = NpcFactory.create(rng, id, self.tier, 0)
+	local personaId, returning = self:pickPersona()
+	local profile = NpcFactory.createPersona(rng, id, personaId, self.tier, 0)
+	self.personasInUse[personaId] = true
 	self.pending += 1
 	self.deps.movement.spawn({ id = id, name = profile.name, seed = rng:int(1, 2 ^ 30) }, function(handle: any?)
 		self.pending -= 1
 		if not handle or not self.running then
+			self.personasInUse[personaId] = nil
 			if handle then
 				self.deps.movement.despawn(handle)
 			end
@@ -310,6 +409,9 @@ function Director.spawn(self)
 		self.live[id] = l
 		self.active += 1
 		self.stats.spawned += 1
+		if returning then
+			self.stats.returning += 1
+		end
 		self:step(l)
 	end)
 end
@@ -353,6 +455,7 @@ function Director.start(self)
 		return
 	end
 	self.running = true
+	Director.current = self
 	for i = 1, NpcConfig.Population.initialBurst do
 		self.deps.delay(i * 0.5, function()
 			self:spawn()

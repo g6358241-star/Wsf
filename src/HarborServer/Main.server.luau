@@ -9,6 +9,10 @@ local Booths=require(script.Parent.Booths)
 local Donations=require(script.Parent.Donations)
 local Boards=require(script.Parent.Boards)
 local Social=require(script.Parent.Social)
+local Requests=require(script.Parent.Requests)
+Profiles.OfflineCredited.Event:Connect(function(player,result)
+    if player.Parent then remote:FireClient(player,"Offline",result) end
+end)
 Profiles.Changed.Event:Connect(function(player)
     if player.Parent then remote:FireClient(player,"State",Profiles.public(player)) end
 end)
@@ -41,12 +45,17 @@ remote.OnServerEvent:Connect(function(player,action,a,b,c,d)
     elseif action=="Release" then Booths.release(player);ok=true;message="Booth released."
     elseif action=="Edit" then ok,message=Booths.edit(player,a,b) -- a = sign text, b = list of preset amounts
     elseif action=="Claim" and key then ok,message=Booths.claim(player,key)
+    -- NPC donation requests: a = request id; b = accept (boolean) or offer index (number).
+    elseif action=="RequestAnswer" then ok,message=Requests.answer(player,a,b)
+    elseif action=="RequestDonate" then ok,message=Requests.donate(player,a,b)
+    elseif action=="RequestLeave" then ok,message=Requests.leave(player,a)
     else return end
     if player.Parent and message and message~="" then remote:FireClient(player,"Notice",message) end
     if ok and player.Parent and (action=="Release" or action=="Edit" or action=="Claim") then boothState(player,true) end
 end)
 Players.PlayerRemoving:Connect(function(player)limits[player]=nil end)
 Economy.init(remote)
+Requests.init(remote)
 Booths.init(remote)
 Donations.init(remote)
 Boards.init()

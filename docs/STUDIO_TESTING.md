@@ -37,6 +37,26 @@ Wait 3 minutes at each level, then copy the last two `[NPC_PERF]` and `[NPC_HEAL
 | `queueTimeouts`, `lost`, `falls`, `recoveries` | movement failures | rare; `lost` near 0 |
 | Network send | replication of 100 humanoids | ≤ 50 kB/s per player |
 
+## 3. NPC requests and the temporary test interface
+The build includes a plain **temporary** interface (Config `PlaceholderUI = true`) so everything can be tried before a
+UI concept is chosen: DCoins and reputation under the Coins counter, messages at the top, the stand editor when you open
+your booth, hold **Tab** for the leaderboard.
+
+Natural requests are rare by design (about 6–10 per hour across all NPCs). To test quickly, in the server command bar:
+```lua
+workspace:SetAttribute("NpcRequestTest", true)   -- every NPC with a stand asks at each 30 s check; 10 s cooldown
+```
+Then check:
+1. An NPC walks up, an Accept/Decline box appears above it, and the camera zooms in slightly; it zooms back afterwards.
+2. **Decline:** the NPC says something that fits its mood. Your reputation drops a little.
+3. **Accept:** the NPC walks to its stand and calls you if you lag behind. Walk to it: the panel lists that NPC's own
+   amounts with the DCoins each one gives. Donate: Coins go down, DCoins go up, and sometimes the NPC gives some back.
+4. **Accept, then walk away:** after a while it says it waited for you and your reputation drops.
+5. `[NPC_DIRECTOR]` lines still show `conserved=true`.
+
+Offline earnings need saved data, so they don't appear in Studio's memory-only mode. They are covered by the automated
+tests and show up in a published test place.
+
 ## Known risks to look for
 - **Humanoid cost.** 100 server-simulated R15 humanoids is the most likely bottleneck. If frame time is over target, the
   first options (no change to NPC decisions) are: lower `TickSeconds` work for distant NPCs further, cache routes between

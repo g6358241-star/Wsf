@@ -3,7 +3,11 @@ local Shared = game:GetService("ReplicatedStorage"):WaitForChild("HarborShared")
 local Config = require(Shared.Config)
 local Rules = require(Shared.Rules)
 local Profiles = require(script.Parent.Profiles)
-local Ledger = require(game:GetService("ServerScriptService"):WaitForChild("NpcCore").Logic.Ledger)
+local NpcCore = game:GetService("ServerScriptService"):WaitForChild("NpcCore")
+local Ledger = require(NpcCore.Logic.Ledger)
+local NpcBrain = require(NpcCore.Logic.NpcBrain)
+local Transactions = require(NpcCore.Logic.Transactions)
+local NpcEconomy = require(NpcCore.Config.Economy)
 local Economy = {}
 local clock = {}
 local looks = {}
@@ -71,6 +75,29 @@ function Economy.receiveNpcDonation(world, txId, npc, player, playerAccount, amo
     end
     npc.donationsMade += 1
     return true, nil
+end
+-- Player -> NPC donation at the NPC's stand (§5.2). One synchronous, non-yielding step:
+--   1. the NPC decides on a return gift (separate random outcome, Coins from its own funds),
+--   2. the profile is debited and receives the deterministic DCoins reward (+ return gift) atomically,
+--   3. the donated Coins enter the NPC world and the return gift leaves it, through the ledger.
+-- Step 3 cannot fail once step 2 succeeded: transaction ids are fresh and the NPC always holds the returned
+-- amount (at most half the gift it just received).
+function Economy.playerDonateToNpc(world, txId, npc, player, playerAccount, amount, willingness, rng)
+    if not table.find(npc.offers, amount) then return false, "That amount isn't offered here." end
+    local returned = Transactions.rollReturn(npc, amount, willingness, rng)
+    local persona = {id = npc.personaId or npc.id, name = npc.name, traits = npc.traits}
+    local ok, message, reward = Profiles.donateToNpc(player, amount, persona, returned)
+    if not ok then return false, message end
+    local primary = Config.Currencies.Primary
+    local receiver = NpcBrain.receivingAccount(npc, NpcEconomy.NpcReceivedFundsTo)
+    Ledger.mint(world, txId .. ":in", receiver, primary, amount, "PlayerInflow")
+    receiver.raised += amount
+    playerAccount.donated += amount
+    if returned > 0 then
+        local source = if Ledger.balance(npc.budget, primary) >= returned then npc.budget else npc.wallet
+        Ledger.transfer(world, txId .. ":ret", source, playerAccount, primary, returned, true)
+    end
+    return true, {amount = amount, dcoins = reward, returned = returned}
 end
 function Economy.claimed(player)
     return Profiles.mutate(player, function(data) data.Claims = math.min(1000000, data.Claims + 1); return true end)

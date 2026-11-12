@@ -8,6 +8,8 @@ local Economy=require(script.Parent.Economy)
 local Donations=require(script.Parent.Donations)
 local Profiles=require(script.Parent.Profiles)
 local Director=require(script.Parent.NpcDirector)
+local Requests=require(script.Parent.Requests)
+local Relationships=require(game:GetService('ServerScriptService'):WaitForChild('NpcCore').Logic.Relationships)
 
 local ok,err=pcall(service.Start)
 if not ok then service.Stop();warn('[NPC] Startup failed: '..tostring(err));return end
@@ -41,9 +43,13 @@ local director=Director.new({
   hold=service.Hold,
   wander=service.Wander,
   despawn=service.Despawn,
+  approachPlayer=service.ApproachPlayer,
+  say=service.Say,
+  model=service.Model,
  },
  booths=Booths,
  economy=Economy,
+ requests=Requests,
  getPlayer=function(userId)
   local player=Players:GetPlayerByUserId(userId)
   return player and Profiles.get(player) and player or nil
@@ -56,6 +62,19 @@ local director=Director.new({
  seed=game.JobId~='' and game.JobId or nil,
  -- Studio stress test: set Workspace attribute NpcStressTarget (e.g. 100) to fill the server quickly.
  targetPopulation=function() return workspace:GetAttribute('NpcStressTarget') or 0 end,
+ -- Studio test switch: Workspace attribute NpcRequestTest = true makes stand NPCs ask at every check.
+ forceRequests=function() return workspace:GetAttribute('NpcRequestTest')==true end,
+ willingness=function(userId,personaId)
+  local player=Players:GetPlayerByUserId(userId)
+  return player and Relationships.willingness(Profiles.opinion(player,personaId)) or 1
+ end,
+ rememberedPersonas=function()
+  local all={}
+  for _,player in Players:GetPlayers() do
+   for _,p in Profiles.rememberedPersonas(player) do table.insert(all,p) end
+  end
+  return all
+ end,
 })
 service.Events.Lost.Event:Connect(function(npcId) director:lost(npcId) end)
 director:start()
@@ -69,8 +88,8 @@ task.spawn(function()
   local balanced,minted,held=director:audit()
   local folder=workspace:FindFirstChild('HarborNPCs')
   if folder then for k,v in s do if type(v)=='number' then folder:SetAttribute('Dir_'..k,v) end end end
-  print(string.format('[NPC_DIRECTOR] active=%d spawned=%d departed=%d passes=%d inspections=%d decisions=%d toPlayer=%d (%d Coins) npcToNpc=%d standClaims=%d standGone=%d visitFailures=%d creditFailures=%d conserved=%s minted=%d accounted=%d',
-   director.active,s.spawned,s.departed,s.passes,s.inspections,s.decisions,s.playerDonations,s.playerCoins,s.npcDonations,s.standClaims,s.standGone,s.visitFailures,s.creditFailures,tostring(balanced),minted,held))
+  print(string.format('[NPC_DIRECTOR] active=%d spawned=%d departed=%d passes=%d inspections=%d decisions=%d toPlayer=%d (%d Coins) npcToNpc=%d standClaims=%d requests=%d requestDonations=%d returning=%d standGone=%d visitFailures=%d creditFailures=%d conserved=%s minted=%d accounted=%d',
+   director.active,s.spawned,s.departed,s.passes,s.inspections,s.decisions,s.playerDonations,s.playerCoins,s.npcDonations,s.standClaims,s.requests,s.requestDonations,s.returning,s.standGone,s.visitFailures,s.creditFailures,tostring(balanced),minted,held))
   if not balanced then warn('[NPC_DIRECTOR] CONSERVATION CHECK FAILED') end
  end
 end)

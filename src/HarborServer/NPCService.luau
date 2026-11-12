@@ -40,10 +40,32 @@ local function cancelVisit(a)
  -- A visit that never reached the booth reports failure so the director can move on.
  if not visit.arrived and visit.onFail then task.spawn(visit.onFail) end
 end
+local function cancelApproach(a)
+ local ap=a.approach;a.approach=nil
+ if not ap then return end
+ if ap.marker then ap.marker:Destroy() end
+ if not ap.done and ap.onFail then task.spawn(ap.onFail) end
+end
+-- Back to idle. A hold that is interrupted (fall recovery, stuck path) completes early instead of being lost,
+-- so the director never waits forever on a callback.
 local function idle(a,now)
- cancelVisit(a)
- disconnectPath(a);a.humanoid:MoveTo(a.root.Position);a.humanoid.AutoRotate=true
+ local waitDone=a.waitDone;a.waitDone=nil
+ local visitDone=a.visit and a.visit.arrived and a.visit.onDone
+ if a.visit then a.visit.onDone=nil end
+ cancelVisit(a);cancelApproach(a)
+ disconnectPath(a);a.humanoid:MoveTo(a.root.Position);a.humanoid.AutoRotate=true;a.lookAt=nil
  state(a,'Idle');a.untilTime=now+rng:NextNumber(Config.IdleMin,Config.IdleMax)
+ if waitDone then task.spawn(waitDone) end
+ if visitDone then task.spawn(visitDone) end
+end
+local function playerRoot(player)
+ local char=player and player.Character
+ return char and char:FindFirstChild('HumanoidRootPart')
+end
+-- A spot a few studs in front of the player, on the NPC's side.
+local function approachTarget(a,root)
+ local d=a.root.Position-root.Position;d=Vector3.new(d.X,0,d.Z)
+ return root.Position+(d.Magnitude>.1 and d.Unit*4 or Vector3.new(4,0,0))
 end
 local clearParams=OverlapParams.new();clearParams.FilterType=Enum.RaycastFilterType.Exclude;clearParams.RespectCanCollide=true
 local function safeAt(position)
@@ -99,7 +121,26 @@ local function advance(a,now)
   if onArrive then task.spawn(onArrive) end
   return
  end
- if not p then a.failures=0;M.Stats.Arrivals+=1;M.Events.Arrived:Fire(a.model,a.target);idle(a,now);finishWander(a);return end
+ if not p then
+  a.failures=0;M.Stats.Arrivals+=1
+  local ap=a.approach
+  if ap then
+   local root=playerRoot(ap.player)
+   if root and (root.Position-a.root.Position).Magnitude<=12 then
+    a.approach=nil;ap.done=true;ap.marker:Destroy()
+    disconnectPath(a);a.humanoid:MoveTo(a.root.Position);a.humanoid.AutoRotate=false
+    state(a,'Wait');a.lookAt=root;a.untilTime=now+3
+    task.spawn(ap.onArrive)
+   elseif root and ap.tries<4 then
+    -- The player moved: walk to where they are now.
+    ap.tries+=1;ap.marker.Position=approachTarget(a,root);requestPath(a,ap.marker,now)
+   else
+    idle(a,now)
+   end
+   return
+  end
+  M.Events.Arrived:Fire(a.model,a.target);idle(a,now);finishWander(a);return
+ end
  -- Reject route segments with no walkable floor before asking the humanoid to move.
  local delta=p.Position-a.root.Position;local count=math.clamp(math.ceil(delta.Magnitude/3),1,6)
  for k=1,count do if not ground(a.root.Position+delta*(k/count)) then failure(a,now);return end end
@@ -305,21 +346,57 @@ function M.VisitBooth(handle,booth,onArrive,onFail)
  a.visit={marker=marker,booth=booth,anchor=slots.anchor,slot=best,onArrive=onArrive,onFail=onFail,arrived=false}
  requestPath(a,marker,os.clock())
 end
+-- Stays still for `seconds`: at the booth if the NPC just arrived there, otherwise where it stands
+-- (facing its last target). Supersedes any walk in progress without firing that walk's callbacks.
 function M.Hold(handle,seconds,onDone)
  local a=M.Agents[handle]
- if not a or not a.visit or not a.visit.arrived then task.spawn(onDone);return end
- a.visit.onDone=onDone;a.untilTime=os.clock()+seconds
+ if not a then return end
+ if a.visit and a.visit.arrived and a.state=='VisitStand' then a.visit.onDone=onDone;a.untilTime=os.clock()+seconds;return end
+ if a.visit then a.visit.onFail=nil;cancelVisit(a) end
+ if a.approach then a.approach.onFail=nil;cancelApproach(a) end
+ a.wanderDone=nil
+ disconnectPath(a);a.humanoid:MoveTo(a.root.Position);a.humanoid.AutoRotate=false
+ state(a,'Wait');a.waitDone=onDone;a.untilTime=os.clock()+seconds
 end
 function M.Wander(handle,onDone)
  local a=M.Agents[handle]
  if not a then task.spawn(onDone);return end
- if a.visit then idle(a,os.clock()) end
+ a.waitDone=nil
+ if a.visit then a.visit.onDone=nil;idle(a,os.clock()) end
  a.wanderDone=onDone;a.wanderDeadline=os.clock()+45
+end
+-- Walks up to a player, re-targeting if they move. Exactly one of onArrive / onFail is called.
+function M.ApproachPlayer(handle,player,onArrive,onFail)
+ local a=M.Agents[handle]
+ if not a then task.spawn(onFail);return end
+ if a.visit then a.visit.onFail=nil;a.visit.onDone=nil;cancelVisit(a) end
+ if a.approach then a.approach.onFail=nil;cancelApproach(a) end
+ a.wanderDone=nil;a.waitDone=nil
+ local root=playerRoot(player)
+ if not root then task.spawn(onFail);return end
+ local marker=Instance.new('Part');marker.Name='NPCPlayerApproach';marker.Size=Vector3.new(.2,.2,.2);marker.Anchored=true;marker.CanCollide=false;marker.CanTouch=false;marker.CanQuery=false;marker.Transparency=1
+ marker.Position=approachTarget(a,root);marker.Parent=folder
+ a.approach={player=player,onArrive=onArrive,onFail=onFail,marker=marker,tries=0,deadline=os.clock()+Config.ApproachSeconds}
+ requestPath(a,marker,os.clock())
+end
+function M.Say(handle,text)
+ local a=M.Agents[handle]
+ if not a or not remote then return end
+ for _,p in Players:GetPlayers() do
+  local root=playerRoot(p)
+  if root and (root.Position-a.root.Position).Magnitude<=Config.BubbleDistance then remote:FireClient(p,a.model,text) end
+ end
+end
+function M.Model(handle)
+ local a=M.Agents[handle]
+ return a and a.model
 end
 function M.Despawn(handle)
  local a=M.Agents[handle];if not a then return end
  M.Agents[handle]=nil;M.Stats.Despawned+=1
- if a.visit then a.visit.onFail=nil;cancelVisit(a) end
+ a.waitDone=nil;a.wanderDone=nil
+ if a.visit then a.visit.onFail=nil;a.visit.onDone=nil;cancelVisit(a) end
+ if a.approach then a.approach.onFail=nil;cancelApproach(a) end
  a.humanoid:MoveTo(a.root.Position)
  local info=TweenInfo.new(Config.DespawnFadeSeconds)
  for part in a.parts do TweenService:Create(part,info,{Transparency=1}):Play() end
@@ -329,8 +406,9 @@ end
 local function lose(a,reason)
  M.Agents[a.handle]=nil;M.Stats.Lost+=1
  if folder then folder:SetAttribute('LastError',tostring(reason)) end
- if a.visit then a.visit.onFail=nil;cancelVisit(a) end
- a.visit=nil;a.wanderDone=nil
+ a.waitDone=nil;a.wanderDone=nil
+ if a.visit then a.visit.onFail=nil;a.visit.onDone=nil;cancelVisit(a) end
+ if a.approach then a.approach.onFail=nil;cancelApproach(a) end
  pcall(function() a.model:Destroy() end)
  M.Events.Lost:Fire(a.id)
 end
@@ -355,17 +433,36 @@ local function update(a,now)
   end
   if now>=a.untilTime then
    local done=visit and visit.onDone
-   if visit and visit.marker then visit.marker:Destroy() end
+   if visit then visit.onDone=nil end
+   local anchor=visit and visit.anchor
    idle(a,now)
+   a.lookAt=anchor -- a follow-up Hold keeps facing the booth
    if done then task.spawn(done) end
   end
   return
  end
+ if a.state=='Wait' then
+  local look=a.lookAt
+  local target=look and (if typeof(look)=='Vector3' then look elseif look.Parent then look.Position else nil)
+  if target then
+   local delta=Vector3.new(target.X-pos.X,0,target.Z-pos.Z)
+   if delta.Magnitude>.1 then a.root.CFrame=a.root.CFrame:Lerp(CFrame.lookAt(pos,pos+delta),.35) end
+  end
+  if now>=a.untilTime then
+   local done,keep=a.waitDone,a.lookAt
+   a.waitDone=nil
+   idle(a,now)
+   a.lookAt=keep
+   if done then task.spawn(done) end
+  end
+  return
+ end
+ if a.approach and now>a.approach.deadline then idle(a,now);return end -- gives up; idle() reports the failure
  if a.state=='Chat' then if now>=a.untilTime then idle(a,now) end;return end
- if not a.visit and now>=a.chatReady and now>=a.nextChatScan then
+ if not a.visit and not a.approach and now>=a.chatReady and now>=a.nextChatScan then
   a.nextChatScan=now+Config.ChatScanSeconds
   for _,b in M.Agents do
-   if b~=a and not b.visit and b.model.Parent and (b.state=='Walk' or b.state=='Idle') and now>=b.chatReady and (b.root.Position-pos).Magnitude<Config.ChatDistance and canChat(a,b) then chat(a,b,now);return end
+   if b~=a and not b.visit and not b.approach and b.model.Parent and (b.state=='Walk' or b.state=='Idle') and now>=b.chatReady and (b.root.Position-pos).Magnitude<Config.ChatDistance and canChat(a,b) then chat(a,b,now);return end
   end
  end
  if a.state=='Idle' then

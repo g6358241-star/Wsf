@@ -153,6 +153,10 @@ return {
 		playerCooldownSeconds = 240,
 		followGraceSeconds = 25, -- no penalty for brief delays (§12.11)
 		maxCallSeconds = { 30, 120 }, -- lerp by patience: how long the NPC keeps calling the player
+		promptSeconds = 20, -- unanswered prompts close without any penalty
+		choiceSeconds = 60, -- time to pick an amount once at the NPC's stand
+		callEverySeconds = 8, -- how often a leading NPC calls a player who lags behind
+		standReachStuds = 14, -- player counts as "at the stand" within this distance
 	},
 
 	Offers = {

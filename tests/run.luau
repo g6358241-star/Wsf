@@ -217,7 +217,7 @@ end)
 test("DCoins can only be minted as a secondary reward (APPROVED)", function()
 	local l = Ledger.new()
 	local a = Ledger.newAccount("a")
-	for _, reason in { "RobuxPurchase", "OfflineEarnings", "StartingGrant", "PlaytimeReward", "DailyReward", "QuestReward", "NpcSpawnWallet" } do
+	for _, reason in { "RobuxPurchase", "OfflineEarnings", "StartingGrant", "PlaytimeReward", "DailyReward", "QuestReward", "NpcSpawnWallet", "PlayerInflow" } do
 		eq(select(2, Ledger.mint(l, "x" .. reason, a, "DCoins", 5, reason)), "MintNotAllowed", reason)
 	end
 	eq(a.balances.DCoins, 0)
@@ -239,6 +239,37 @@ test("Rules (playtime/daily/quests/packs) can never grant DCoins", function()
 	Rules.quest(data, "Q", cfg)
 	eq(data.DCoins, 0, "DCoins untouched")
 	assert(data.Coins > 0, "Coins granted")
+end)
+
+test("Personas: same id gives the same name and personality on any server", function()
+	local tiers = require("../src/NpcCore/Config/Npc").wealthTiers
+	local a = NpcFactory.createPersona(Rng.new(1), "n1", "P42", tiers[1], 0)
+	local b = NpcFactory.createPersona(Rng.new(999), "n2", "P42", tiers[3], 0)
+	eq(a.name, b.name, "name")
+	eq(a.archetype.id, b.archetype.id, "archetype")
+	for trait, v in a.traits do
+		eq(b.traits[trait], v, trait)
+	end
+	local c = NpcFactory.createPersona(Rng.new(1), "n3", "P43", tiers[1], 0)
+	assert(c.name ~= a.name or c.archetype.id ~= a.archetype.id or c.traits.patience ~= a.traits.patience, "different persona differs")
+end)
+
+test("Return gifts: never more than half the donation, rarer when the NPC is offended", function()
+	local rng = Rng.new(5)
+	local tier = NpcFactory.rollWealthTier(rng)
+	local npc = NpcBrain.fromProfile(NpcFactory.create(rng, "n", tier, 0), 0, rng)
+	local happy, offended = 0, 0
+	for _ = 1, 20000 do
+		local r = Transactions.rollReturn(npc, 100, 1.3, rng)
+		assert(r <= 50, "at most half")
+		if r > 0 then
+			happy += 1
+		end
+		if Transactions.rollReturn(npc, 100, 0.5, rng) > 0 then
+			offended += 1
+		end
+	end
+	assert(offended < happy, "offended NPCs return less often")
 end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))

@@ -12,7 +12,7 @@ local Config = {
         IdleMin = 3, IdleMax = 7, PathTimeout = 100, WaypointTimeout = 7,
         StuckSeconds = 3.5, PathRetries = 2, MaxConcurrentPaths = 4, QueueWaitSeconds = 20,
         FarThinkSeconds = .3, -- movement checks for NPCs far from every player (decisions are unaffected)
-        ChatScanSeconds = 1, DespawnFadeSeconds = .6,
+        ChatScanSeconds = 1, DespawnFadeSeconds = .6, ApproachSeconds = 45,
         ChatDistance = 7, ChatSeconds = 5.5, ChatCooldownMin = 20, ChatCooldownMax = 34,
         BubbleDistance = 90, VisualDistance = 155, AnimationDistance = 100,
         Names = {"Mira","Kai","Robin","Sky","Alex","Sage","River","Sunny","Remy","Ash","Avery","Jules","Cedar","Nova"},
@@ -43,6 +43,8 @@ local Config = {
         -- false = keep them spendable as-is. true = move them to LegacyDCoins (kept in the save, not spendable).
         QuarantineTestDCoins = false,
     },
+    -- TEMPORARY functional test UI (HarborClient.PlaceholderUI) until the owner picks a UI concept. false = off.
+    PlaceholderUI = true,
     RealPaymentsEnabled = false,
     Version = 2,
     DataStore = "HarborProfiles_TestCurrency_v2",

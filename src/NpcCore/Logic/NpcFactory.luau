@@ -17,6 +17,7 @@ export type Profile = {
 	traits: { [string]: number },
 	wallet: number,
 	offers: { number },
+	personaId: string?,
 }
 
 local FIRST = {
@@ -71,6 +72,26 @@ function NpcFactory.create(rng: Rng.Rng, id: string, tier: WealthTier, luckTotal
 		traits = NpcFactory.rollTraits(rng, archetype),
 		wallet = wallet,
 		offers = OfferGenerator.generate(rng, wallet),
+	}
+end
+
+-- A persistent identity (§12.1, §12.9): the persona id alone determines name, archetype and personality, so an
+-- NPC that returns in a later session is recognisably the same character. Wallet and offers still come from
+-- this server's wealth profile via `rng`.
+function NpcFactory.createPersona(rng: Rng.Rng, id: string, personaId: string, tier: WealthTier, luckTotal: number): Profile
+	local identity = Rng.new("persona:" .. personaId)
+	local archetype = NpcFactory.pickArchetype(identity, luckTotal)
+	local name = FIRST[identity:int(1, #FIRST)] .. " " .. LAST[identity:int(1, #LAST)]
+	local traits = NpcFactory.rollTraits(identity, archetype)
+	local wallet = NpcFactory.rollWallet(rng, tier, archetype)
+	return {
+		id = id,
+		name = name,
+		archetype = archetype,
+		traits = traits,
+		wallet = wallet,
+		offers = OfferGenerator.generate(rng, wallet),
+		personaId = personaId,
 	}
 end
 

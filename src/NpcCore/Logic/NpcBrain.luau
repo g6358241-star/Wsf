@@ -16,6 +16,7 @@ local NpcBrain = {}
 
 export type Agent = {
 	id: string,
+	personaId: string?, -- persistent identity used for memories (NpcFactory.createPersona)
 	name: string,
 	archetype: NpcConfig.Archetype,
 	traits: { [string]: number },
@@ -55,6 +56,7 @@ function NpcBrain.fromProfile(profile: NpcFactory.Profile, now: number, rng: Rng
 	local cfg = NpcConfig
 	return {
 		id = profile.id,
+		personaId = profile.personaId,
 		name = profile.name,
 		archetype = profile.archetype,
 		traits = tr,

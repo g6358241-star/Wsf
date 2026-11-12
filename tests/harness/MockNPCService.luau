@@ -52,6 +52,20 @@ end
 function M.Hold(handle, seconds, onDone)
 	later(seconds, handle, onDone)
 end
+M.approachFailChance = 0.05
+M.said = {}
+function M.ApproachPlayer(handle, player, onArrive, onFail)
+	local fail = rng:chance(M.approachFailChance) or not player.Parent
+	later(rng:range(4, 12), handle, if fail then onFail else onArrive)
+end
+function M.Say(handle, text)
+	if M.Agents[handle] then
+		table.insert(M.said, text)
+	end
+end
+function M.Model(_handle)
+	return nil
+end
 function M.Wander(handle, onDone)
 	if rng:chance(M.loseChance) then
 		task.delay(1, function()

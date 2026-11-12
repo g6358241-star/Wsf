@@ -50,5 +50,7 @@ return {
 		DailyReward = "Coins",
 		QuestReward = "Coins",
 		NpcSpawnWallet = "Coins", -- an arriving NPC's starting wallet, the one approved NPC money source
+		-- Not new money: Coins a player donated move into the NPC world after the profile was debited.
+		PlayerInflow = "Coins",
 	},
 }
