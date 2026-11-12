@@ -99,6 +99,21 @@ function Ledger.transfer(
 	return true, nil
 end
 
+-- Reverses a transfer that succeeded moments ago when the paired step (e.g. a profile credit) failed.
+-- The transaction id stays consumed, so the original request can never be replayed.
+function Ledger.refund(self: Ledger, txId: string, from: Account, to: Account, currency: string, amount: number): boolean
+	if not self.seen[txId] or (to.balances[currency] or 0) < amount then
+		return false
+	end
+	to.balances[currency] -= amount
+	from.balances[currency] = (from.balances[currency] or 0) + amount
+	if currency == EconomyConfig.Currency.Primary then
+		from.donated = math.max(0, from.donated - amount)
+		to.raised = math.max(0, to.raised - amount)
+	end
+	return true
+end
+
 -- Creates currency. Only reasons allow-listed in Config.Economy.MintReasons may mint, each for one currency.
 function Ledger.mint(self: Ledger, txId: string, to: Account, currency: string, amount: number, reason: string): (boolean, string?)
 	local allowed = (EconomyConfig.MintReasons :: { [string]: string })[reason]

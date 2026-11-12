@@ -2,13 +2,13 @@
 -- model of the 48-booth CloudHarbor market and reports how often the player's stand receives
 -- donations under different listings. Usage: lune run sim/balance [hours] [runs]
 local process = require("@lune/process")
-local Rng = require("../src/server/Logic/Rng")
-local Ledger = require("../src/server/Logic/Ledger")
-local NpcFactory = require("../src/server/Logic/NpcFactory")
-local NpcBrain = require("../src/server/Logic/NpcBrain")
-local Transactions = require("../src/server/Logic/Transactions")
-local NpcConfig = require("../src/server/Config/Npc")
-local EconomyConfig = require("../src/server/Config/Economy")
+local Rng = require("../src/NpcCore/Logic/Rng")
+local Ledger = require("../src/NpcCore/Logic/Ledger")
+local NpcFactory = require("../src/NpcCore/Logic/NpcFactory")
+local NpcBrain = require("../src/NpcCore/Logic/NpcBrain")
+local Transactions = require("../src/NpcCore/Logic/Transactions")
+local NpcConfig = require("../src/NpcCore/Config/Npc")
+local EconomyConfig = require("../src/NpcCore/Config/Economy")
 
 local HOURS = tonumber(process.args[1]) or 6
 local RUNS = tonumber(process.args[2]) or 24
@@ -93,7 +93,7 @@ local function runOnce(seed: string, playerOffers: { number }, forceTier: string
 		local id = "N" .. nextId
 		local profile = NpcFactory.create(rng, id, tier, 0)
 		local agent = NpcBrain.fromProfile(profile, t, rng)
-		Ledger.mint(ledger, id .. ":spawn", agent.wallet, "Primary", profile.wallet, "NpcSpawnWallet")
+		Ledger.mint(ledger, id .. ":spawn", agent.wallet, "Coins", profile.wallet, "NpcSpawnWallet")
 		Transactions.withdraw(ledger, id .. ":w0", agent, NpcBrain.initialWithdrawal(agent, rng))
 		agents[id] = agent
 		active += 1
@@ -192,7 +192,7 @@ local function runOnce(seed: string, playerOffers: { number }, forceTier: string
 		live += NpcBrain.totalFunds(a)
 	end
 	local minted = ledger.minted.NpcSpawnWallet or 0
-	assert(live + departedFunds + player.balances.Primary == minted, "currency not conserved in run " .. seed)
+	assert(live + departedFunds + player.balances.Coins == minted, "currency not conserved in run " .. seed)
 
 	m.tier = tier.id
 	m.peak = peak

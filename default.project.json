@@ -2,9 +2,28 @@
   "name": "NpcDonationSimulator",
   "tree": {
     "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "HarborShared": {
+        "$path": "src/HarborShared"
+      }
+    },
     "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "HarborServer": {
+        "$path": "src/HarborServer"
+      },
       "NpcCore": {
-        "$path": "src/server"
+        "$path": "src/NpcCore"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "HarborClient": {
+          "$path": "src/HarborClient"
+        }
       }
     }
   }
