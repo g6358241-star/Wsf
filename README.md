@@ -33,7 +33,8 @@ lune run tests/run                 # unit tests
 lune run tests/integration         # real server scripts, mocked engine, 2+ simulated hours
 lune run sim/balance 6 24          # stand income per listing
 lune run sim/requests 4 16         # NPC request frequency study
-lune run tools/build-place MyGame.rbxlx build/MyGame_v2.rbxlx build/ServerStorageBackups_Archive.rbxmx
+lune run tools/build-place MyGame.rbxlx build/MyGame_v2.rbxl build/ServerStorageBackups_Archive.rbxm   # .rbxl = binary, .rbxlx = XML
+lune run tools/compare-places MyGame.rbxlx build/MyGame_v2.rbxl   # meshes, text, lights, lighting unchanged
 rojo serve                         # sync the four script folders into an open place
 ```
 Rojo maps only the four script folders, so syncing never touches the map.

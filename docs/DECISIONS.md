@@ -20,6 +20,8 @@ These decisions extend the design brief (v0.2) and take priority over earlier pr
   (`ReplicatedStorage.Shared.*` are Studio-only helpers), and **0 references** point from the live place into the backups.
 - 601 `__CleanupParent` restore pointers inside `MapCleanup_Backup` point to live `Workspace.Map` folders. A model
   file cannot keep references outside itself, so each pointer also carries its target as a `RestoreTargetPath` attribute.
+- Binary builds: `MyGame_v2.rbxl` (0.26 MB) and `ServerStorageBackups_Archive.rbxm` (0.13 MB). XML builds of the same
+  content are 15.6 MB and 26.4 MB. `tools/compare-places` confirms meshes, text, lights and lighting match the original.
 - **Restore:** the original `MyGame.rbxlx` is untouched and remains the full restore point. To bring the backups into
   the new place, right-click ServerStorage → *Insert from File…* → the archive. To repair the cleanup pointers afterwards,
   run in the command bar:

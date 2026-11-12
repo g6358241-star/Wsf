@@ -5,7 +5,7 @@ time. Those can only be measured in Studio, and nobody has run this build in Stu
 paste the Output lines back.
 
 ## Load the build
-Either open `MyGame_v2.rbxlx`, or keep your own file and sync with Rojo (`rojo serve`, then connect from the Rojo plugin).
+Either open `MyGame_v2.rbxl` (binary; the XML `.rbxlx` build has identical content), or keep your own file and sync with Rojo (`rojo serve`, then connect from the Rojo plugin).
 Rojo only replaces `ServerScriptService.HarborServer`, `ServerScriptService.NpcCore`, `ReplicatedStorage.HarborShared`
 and `StarterPlayer.StarterPlayerScripts.HarborClient`; the map is not touched.
 

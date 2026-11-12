@@ -2,7 +2,7 @@
 --   1. moves the ServerStorage backup folders into a separate archive model (.rbxmx),
 --   2. replaces HarborServer / HarborShared / HarborClient scripts with the repository versions and adds NpcCore,
 --   3. verifies that every other instance in the place is unchanged.
--- Usage: lune run tools/build-place <original.rbxlx> <out.rbxlx> <archive.rbxmx>
+-- Usage: lune run tools/build-place <original> <out.rbxl|.rbxlx> <archive.rbxm|.rbxmx>
 local fs = require("@lune/fs")
 local process = require("@lune/process")
 local roblox = require("@lune/roblox")
@@ -102,7 +102,11 @@ for _, name in BACKUPS do
 		table.insert(archived, folder)
 	end
 end
-fs.writeFile(ARCHIVE, roblox.serializeModel(archived, true))
+-- Format follows the extension: .rbxlx/.rbxmx = XML, .rbxl/.rbxm = binary.
+local function isXml(path)
+	return string.sub(path, -1) == "x"
+end
+fs.writeFile(ARCHIVE, roblox.serializeModel(archived, isXml(ARCHIVE)))
 for _, folder in archived do
 	folder.Parent = nil
 end
@@ -151,7 +155,7 @@ for _, root in SCRIPT_ROOTS do
 	table.insert(replaced, string.format("%s.%s: %d -> %d instances", table.concat(parentPath, "."), name, oldCount, #new:GetDescendants()))
 end
 
-fs.writeFile(OUT, roblox.serializePlace(original, true))
+fs.writeFile(OUT, roblox.serializePlace(original, isXml(OUT)))
 
 -- 3. Verify by reading both files back.
 local out = roblox.deserializePlace(fs.readFile(OUT))
